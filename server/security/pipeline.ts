@@ -1,12 +1,18 @@
-// Corrected contents of the file
-// ... other content
+// Updated TypeScript code
 
-// Null coalescing fix at line 352
-const severity352 = rule.severity ?? normalized.severity;
+// ... additional imports and code
 
-// ... possibly more content
+// Assuming we have a 'rule' and 'normalized' object in context
 
-// Null coalescing fix at line 378
-const severity378 = rule.severity ?? normalized.severity;
+// Original code may look like this:
+// const someValue = severity: rule.severity;
 
-// ... rest of the file
+// Fixing null coalescing on line 352
+const someValue352 = severity: rule.severity ?? normalized.severity;
+
+// ... other code ... 
+
+// Fixing null coalescing on line 378
+const someValue378 = severity: rule.severity ?? normalized.severity;
+
+// ... additional code and implementations
