@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1775806136918,
+      "tag": "0000_special_thunderbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1775806402464,
+      "tag": "0001_outstanding_hairball",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1775817600000,
+      "tag": "0002_major_upgrade",
+      "breakpoints": true
+    }
+  ]
+}

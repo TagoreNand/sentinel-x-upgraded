@@ -1,0 +1,26 @@
+version: '3.9'
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: sentinelx
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  app:
+    build: .
+    depends_on:
+      - db
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: mysql://root:password@db:3306/sentinelx
+    ports:
+      - "3000:3000"
+
+volumes:
+  mysql_data:

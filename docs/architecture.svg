@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860" fill="none">
+  <rect width="1400" height="860" fill="#0b1220"/>
+  <text x="60" y="70" fill="#e5eefc" font-size="34" font-family="Arial" font-weight="700">Sentinel-X Security Operations Architecture</text>
+  <text x="60" y="105" fill="#9fb3d9" font-size="18" font-family="Arial">Integrated ingestion, enrichment, detection engineering, investigations, and response</text>
+
+  <g font-family="Arial">
+    <rect x="60" y="150" width="220" height="180" rx="18" fill="#13203a" stroke="#2d4370"/>
+    <text x="90" y="185" fill="#d8e6ff" font-size="22" font-weight="700">Data Sources</text>
+    <text x="90" y="220" fill="#aac0e6" font-size="17">• Syslog / raw logs</text>
+    <text x="90" y="250" fill="#aac0e6" font-size="17">• JSON events</text>
+    <text x="90" y="280" fill="#aac0e6" font-size="17">• IAM telemetry</text>
+    <text x="90" y="310" fill="#aac0e6" font-size="17">• Endpoint telemetry</text>
+
+    <rect x="340" y="150" width="260" height="180" rx="18" fill="#13203a" stroke="#2d4370"/>
+    <text x="370" y="185" fill="#d8e6ff" font-size="22" font-weight="700">Ingestion Pipeline</text>
+    <text x="370" y="220" fill="#aac0e6" font-size="17">• Parse / normalize</text>
+    <text x="370" y="250" fill="#aac0e6" font-size="17">• Common event schema</text>
+    <text x="370" y="280" fill="#aac0e6" font-size="17">• Enrichment attachment</text>
+    <text x="370" y="310" fill="#aac0e6" font-size="17">• Security event storage</text>
+
+    <rect x="660" y="150" width="290" height="220" rx="18" fill="#13203a" stroke="#2d4370"/>
+    <text x="690" y="185" fill="#d8e6ff" font-size="22" font-weight="700">Enrichment Layer</text>
+    <text x="690" y="220" fill="#aac0e6" font-size="17">• IOC lookup</text>
+    <text x="690" y="250" fill="#aac0e6" font-size="17">• Asset context</text>
+    <text x="690" y="280" fill="#aac0e6" font-size="17">• Offline geo-IP classification</text>
+    <text x="690" y="310" fill="#aac0e6" font-size="17">• ATT&amp;CK mapping</text>
+    <text x="690" y="340" fill="#aac0e6" font-size="17">• CVE candidate matching</text>
+
+    <rect x="1010" y="150" width="320" height="220" rx="18" fill="#13203a" stroke="#2d4370"/>
+    <text x="1040" y="185" fill="#d8e6ff" font-size="22" font-weight="700">Detection Engineering</text>
+    <text x="1040" y="220" fill="#aac0e6" font-size="17">• Sigma-like IDS rules</text>
+    <text x="1040" y="250" fill="#aac0e6" font-size="17">• Keyword / regex matching</text>
+    <text x="1040" y="280" fill="#aac0e6" font-size="17">• Threshold logic</text>
+    <text x="1040" y="310" fill="#aac0e6" font-size="17">• IOC / asset criticality gates</text>
+    <text x="1040" y="340" fill="#aac0e6" font-size="17">• Confidence scoring</text>
+
+    <rect x="280" y="450" width="280" height="220" rx="18" fill="#102a25" stroke="#2e7b6b"/>
+    <text x="310" y="485" fill="#ddfff7" font-size="22" font-weight="700">Analyst Domains</text>
+    <text x="310" y="520" fill="#bfe7df" font-size="17">• Vulnerability scanning</text>
+    <text x="310" y="550" fill="#bfe7df" font-size="17">• Phishing triage</text>
+    <text x="310" y="580" fill="#bfe7df" font-size="17">• Cloud findings</text>
+    <text x="310" y="610" fill="#bfe7df" font-size="17">• IAM + endpoint telemetry</text>
+
+    <rect x="610" y="450" width="280" height="220" rx="18" fill="#2a1f12" stroke="#8a5c25"/>
+    <text x="640" y="485" fill="#fff0d7" font-size="22" font-weight="700">Incidents &amp; Cases</text>
+    <text x="640" y="520" fill="#f1d4aa" font-size="17">• Alert creation</text>
+    <text x="640" y="550" fill="#f1d4aa" font-size="17">• Auto incident creation</text>
+    <text x="640" y="580" fill="#f1d4aa" font-size="17">• Forensics evidence</text>
+    <text x="640" y="610" fill="#f1d4aa" font-size="17">• Chain of custody + timeline</text>
+
+    <rect x="940" y="450" width="320" height="220" rx="18" fill="#24163a" stroke="#6d45a8"/>
+    <text x="970" y="485" fill="#f1e7ff" font-size="22" font-weight="700">Response &amp; Governance</text>
+    <text x="970" y="520" fill="#d9c6ff" font-size="17">• SOAR playbooks</text>
+    <text x="970" y="550" fill="#d9c6ff" font-size="17">• Execution records</text>
+    <text x="970" y="580" fill="#d9c6ff" font-size="17">• Incident audit trail</text>
+    <text x="970" y="610" fill="#d9c6ff" font-size="17">• Platform audit logs</text>
+  </g>
+
+  <g stroke="#7aa2ff" stroke-width="3" marker-end="url(#arrow)">
+    <line x1="280" y1="240" x2="340" y2="240"/>
+    <line x1="600" y1="240" x2="660" y2="240"/>
+    <line x1="950" y1="260" x2="1010" y2="260"/>
+    <line x1="1170" y1="370" x2="1170" y2="450"/>
+    <line x1="1090" y1="370" x2="760" y2="450"/>
+    <line x1="1010" y1="370" x2="420" y2="450"/>
+  </g>
+
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#7aa2ff"/>
+    </marker>
+  </defs>
+</svg>
