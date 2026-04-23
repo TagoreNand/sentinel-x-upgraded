@@ -343,13 +343,15 @@ export async function ingestAndDetect(input: {
     const match = await evaluateRuleMatch({ rule, event: normalized, recentEvents, iocHits, asset });
     if (!match) continue;
 
+    const ruleSeverity: Severity = rule.severity ?? normalized.severity ?? "medium";
+
     let incidentNumericId: number | undefined;
     if (match.confidence >= 85 || rule.severity === "critical") {
       const createdIncident = await db.createIncident({
         incidentId: nanoid(),
         title: `Detection: ${rule.ruleName}`,
         description: `Auto-created from ingestion pipeline for ${normalized.eventType}`,
-        severity: rule.severity,
+        severity: ruleSeverity,
         status: "open",
         classification: normalized.eventCategory,
         createdBy: input.userId,
@@ -375,7 +377,7 @@ export async function ingestAndDetect(input: {
       alertId: nanoid(),
       title: `${rule.ruleName} matched on ${normalized.hostname || normalized.sourceIp || normalized.eventType}`,
       description: match.reasons.join("; "),
-      severity: rule.severity,
+      severity: ruleSeverity,
       ruleId: rule.ruleId,
       ruleName: rule.ruleName,
       sourceEvents: eventPk ? [eventPk] : [],
@@ -418,7 +420,7 @@ export async function ingestAndDetect(input: {
       mitreTechnique: match.mitreTechnique,
       mitreTactic: match.mitreTactic,
     });
-    alerts.push({ id: alertPk, title: rule.ruleName, severity: rule.severity, incidentId: incidentNumericId });
+    alerts.push({ id: alertPk, title: rule.ruleName, severity: ruleSeverity, incidentId: incidentNumericId });
   }
 
   return {
