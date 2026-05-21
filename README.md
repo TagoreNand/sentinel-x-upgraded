@@ -1,6 +1,6 @@
 # Sentinel-X SOC Platform
 
-Sentinel-X is an analyst-focused Security Operations Center platform built with **React + Vite**, **tRPC**, **Drizzle ORM**, **MySQL**, and an integrated detection pipeline. This upgraded version moves the project beyond CRUD-only cyber modules and adds the essential capabilities expected in a higher-level cyber security analyst portfolio platform.
+Sentinel-X is an analyst-focused Security Operations Center platform built with **React + Vite**, **tRPC**, **Drizzle ORM**, **MySQL**, and an integrated detection pipeline. This upgraded version moves the project beyond CRUD-only cyber modules.
 
 ## What changed in this upgrade
 
