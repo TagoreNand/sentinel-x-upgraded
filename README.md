@@ -241,16 +241,3 @@ For an even stronger senior-level version, add:
 - multi-tenant data separation
 
 ---
-
-## Current implementation note
-
-I made the code and repo changes directly in the project structure. I could not validate the full Node build inside this environment because package installation was unavailable here, so you should run:
-
-```bash
-npm install
-npm run check
-npm run test
-npm run build
-```
-
-in your local machine or CI after pulling these changes.
