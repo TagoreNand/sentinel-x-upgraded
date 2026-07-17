@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, index } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, index, uniqueIndex } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -45,6 +45,9 @@ export const securityEvents = mysqlTable("security_events", {
   sourceIpIdx: index("idx_source_ip").on(table.sourceIp),
   severityIdx: index("idx_severity").on(table.severity),
   timestampIdx: index("idx_timestamp").on(table.timestamp),
+  // Composite indexes back the threshold-rule COUNT queries (field + window).
+  sourceIpTsIdx: index("idx_source_ip_ts").on(table.sourceIp, table.timestamp),
+  usernameTsIdx: index("idx_username_ts").on(table.username, table.timestamp),
 }));
 
 export type SecurityEvent = typeof securityEvents.$inferSelect;
@@ -122,11 +125,16 @@ export const incidents = mysqlTable("incidents", {
   affectedAssets: json("affectedAssets"),
   rootCause: text("rootCause"),
   timeline: json("timeline"),
+  // Idempotency key for pipeline-created incidents: hash of
+  // (rule, correlated entity, time bucket). NULL for analyst-created
+  // incidents — MySQL unique indexes allow repeated NULLs.
+  correlationKey: varchar("correlationKey", { length: 64 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
 }, (table) => ({
   statusIdx: index("idx_incident_status").on(table.status),
   severityIdx: index("idx_incident_severity").on(table.severity),
+  correlationIdx: uniqueIndex("uq_incident_correlation").on(table.correlationKey),
 }));
 
 export type Incident = typeof incidents.$inferSelect;
@@ -555,6 +563,34 @@ export const soarExecutions = mysqlTable("soar_executions", {
 
 export type SoarExecution = typeof soarExecutions.$inferSelect;
 export type InsertSoarExecution = typeof soarExecutions.$inferInsert;
+
+/**
+ * Durable ledger for asynchronous ingestion. The queue transport (Redis or
+ * in-process) is delivery-only; THIS table is the source of truth for job
+ * state, results, and replay decisions. `attempts` is bumped on claim so a
+ * poison payload exhausts its budget even across worker crashes.
+ */
+export const ingestJobs = mysqlTable("ingest_jobs", {
+  id: int("id").autoincrement().primaryKey(),
+  ingestId: varchar("ingestId", { length: 64 }).notNull().unique(),
+  sourceType: varchar("sourceType", { length: 32 }).notNull(),
+  payload: json("payload"),
+  assetId: int("assetId"),
+  requestedBy: int("requestedBy"),
+  status: mysqlEnum("status", ["queued", "processing", "completed", "failed"]).default("queued").notNull(),
+  attempts: int("attempts").default(0).notNull(),
+  result: json("result"),
+  error: text("error"),
+  queuedAt: timestamp("queuedAt").defaultNow().notNull(),
+  startedAt: timestamp("startedAt"),
+  completedAt: timestamp("completedAt"),
+}, (table) => ({
+  statusQueuedIdx: index("idx_ingest_status_queued").on(table.status, table.queuedAt),
+  statusStartedIdx: index("idx_ingest_status_started").on(table.status, table.startedAt),
+}));
+
+export type IngestJob = typeof ingestJobs.$inferSelect;
+export type InsertIngestJob = typeof ingestJobs.$inferInsert;
 
 export const platformAuditLogs = mysqlTable("platform_audit_logs", {
   id: int("id").autoincrement().primaryKey(),

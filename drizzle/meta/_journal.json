@@ -22,6 +22,20 @@
       "when": 1775817600000,
       "tag": "0002_major_upgrade",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1783641600000,
+      "tag": "0003_pipeline_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1784073600000,
+      "tag": "0004_ingest_queue",
+      "breakpoints": true
     }
   ]
 }

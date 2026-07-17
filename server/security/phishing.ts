@@ -51,7 +51,7 @@ export async function analyzePhishingEmail(input: {
 
   let linkedIncidentId: number | undefined;
   if (input.createIncident && verdict !== "benign") {
-    const incident = await db.createIncident({
+    linkedIncidentId = await db.createIncident({
       incidentId: nanoid(),
       title: `Phishing email triage: ${input.subject}`,
       description: `Auto-created from phishing analysis for sender ${input.sender}`,
@@ -63,17 +63,16 @@ export async function analyzePhishingEmail(input: {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    linkedIncidentId = Number((incident as any)?.insertId || 0) || undefined;
   }
 
-  const insert = await db.createPhishingAnalysis({
+  const analysisId = await db.createPhishingAnalysis({
     analysisId: nanoid(),
     emailSubject: input.subject,
     sender: input.sender,
     recipient: input.recipient,
     urlCount: urls.length,
     attachmentCount: input.attachmentCount ?? 0,
-    verdict: verdict as any,
+    verdict,
     confidence: Math.min(score, 95),
     reasons,
     indicators,
@@ -82,7 +81,7 @@ export async function analyzePhishingEmail(input: {
   });
 
   return {
-    analysisId: Number((insert as any)?.insertId || 0),
+    analysisId,
     verdict,
     confidence: Math.min(score, 95),
     reasons,

@@ -1,11 +1,13 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import { adminProcedure, ingestProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import { logger } from "./_core/logger";
 import { z } from "zod";
 import { nanoid } from "nanoid";
 import * as db from "./db";
 import { ingestAndDetect } from "./security/pipeline";
+import { enqueueIngest } from "./queue/ingestQueue";
 import { runVulnerabilityScan } from "./security/vulnerability";
 import { analyzePhishingEmail } from "./security/phishing";
 import { executeSoarPlaybook } from "./security/soar";
@@ -14,17 +16,53 @@ import { seedDemoSecurityData } from "./security/demoData";
 const jsonRecord = z.record(z.string(), z.any());
 const severitySchema = z.enum(["critical", "high", "medium", "low"]);
 
+const auditLog = logger.child({ component: "audit" });
+
+/**
+ * Platform audit trail. Runs AFTER the domain write has committed, so a
+ * failure here must not fail the request — that would report an error for an
+ * operation that already happened, and retries would double-apply it. The
+ * failure is logged at error level instead; the log stream is the backstop
+ * audit record. (If regulatory scope ever requires atomic audit, move the
+ * audit insert into the same transaction as the domain write.)
+ */
 async function audit(userId: number | undefined, action: string, entityType: string, entityId?: string, details?: Record<string, any>) {
-  await db.createPlatformAuditLog({
-    auditId: nanoid(),
-    actorUserId: userId,
-    action,
-    entityType,
-    entityId,
-    details,
-    outcome: "success",
-    createdAt: new Date(),
-  });
+  try {
+    await db.createPlatformAuditLog({
+      auditId: nanoid(),
+      actorUserId: userId,
+      action,
+      entityType,
+      entityId,
+      details,
+      outcome: "success",
+      createdAt: new Date(),
+    });
+  } catch (error) {
+    auditLog.error("audit log write failed", error, { action, entityType, entityId, userId });
+  }
+}
+
+const detectionLog = logger.child({ component: "detection-sidechannel" });
+
+/**
+ * Detection for side-channel ingestion (IAM/endpoint/cloud/phishing) is
+ * best-effort BY DESIGN: the domain record has already committed by the time
+ * this runs, so throwing here would tell the client "not recorded" about a
+ * write that happened — and a well-behaved client's retry would then
+ * duplicate the domain row. Telemetry must keep flowing when the detection
+ * pipeline is degraded; the failure is logged loudly and surfaced to the
+ * caller as detectionTriggered=false instead. (siem.ingestRawEvent is the
+ * opposite case — detection IS its purpose — and stays fail-loud.)
+ */
+async function runDetectionBestEffort(params: Parameters<typeof ingestAndDetect>[0]): Promise<boolean> {
+  try {
+    await ingestAndDetect(params);
+    return true;
+  } catch (error) {
+    detectionLog.error("detection pipeline failed for side-channel ingest", error, { sourceType: params.sourceType });
+    return false;
+  }
 }
 
 export const appRouter = router({
@@ -122,25 +160,56 @@ export const appRouter = router({
         return { eventId, success: true };
       }),
 
-    ingestRawEvent: protectedProcedure
+    ingestRawEvent: ingestProcedure
       .input(z.object({
         sourceType: z.enum(["json", "syslog", "raw", "iam", "endpoint", "cloud", "phishing"]),
-        payload: z.union([z.string(), jsonRecord]),
-        assetId: z.number().optional(),
+        // Bounded payload: a single "event" the size of a novel is either a
+        // misconfigured shipper or an attack on the parser; reject at the
+        // edge instead of feeding it to normalization and the database.
+        // The object branch is bounded by its serialized size — without the
+        // refine, the string cap was trivially bypassable by sending the
+        // same bytes as a JSON object.
+        payload: z.union([
+          z.string().min(1).max(64_000),
+          jsonRecord.refine((value) => JSON.stringify(value).length <= 64_000, {
+            message: "Event payload exceeds the 64KB ingestion limit",
+          }),
+        ]),
+        assetId: z.number().int().positive().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await ingestAndDetect({
+        // Async by design: the request path validates and durably records
+        // the job, then returns. Detection cost (enrichment queries, rule
+        // evaluation, the persist transaction) is paid by the queue worker,
+        // not the caller. Poll siem.getIngestJob for the outcome.
+        const ingestId = await enqueueIngest({
           sourceType: input.sourceType,
           payload: input.payload,
           assetId: input.assetId,
           userId: ctx.user?.id,
         });
-        await audit(ctx.user?.id, "siem.ingest", "security_event", String(result.eventId), {
-          sourceType: input.sourceType,
-          detections: result.detections.length,
-          alerts: result.alerts.length,
-        });
-        return { success: true, ...result };
+        await audit(ctx.user?.id, "siem.ingest.enqueue", "ingest_job", ingestId, { sourceType: input.sourceType });
+        return { accepted: true as const, ingestId };
+      }),
+
+    getIngestJob: protectedProcedure
+      .input(z.object({ ingestId: z.string().min(1).max(64) }))
+      .query(async ({ input }) => {
+        const job = await db.getIngestJobByIngestId(input.ingestId);
+        if (!job) return null;
+        // Deliberately excludes the raw payload — pollers need status and
+        // outcome, not a 64KB echo of what they sent.
+        return {
+          ingestId: job.ingestId,
+          sourceType: job.sourceType,
+          status: job.status,
+          attempts: job.attempts,
+          result: job.result,
+          error: job.error,
+          queuedAt: job.queuedAt,
+          startedAt: job.startedAt,
+          completedAt: job.completedAt,
+        };
       }),
 
     getEvents: protectedProcedure
@@ -480,7 +549,7 @@ export const appRouter = router({
         let incidentId: number | undefined;
 
         if (input.confidence >= 75) {
-          const createdIncident = await db.createIncident({
+          incidentId = await db.createIncident({
             incidentId: nanoid(),
             title: `IDS Detection - Rule ${input.ruleId}`,
             severity: "high",
@@ -490,7 +559,6 @@ export const appRouter = router({
             createdAt: new Date(),
             updatedAt: new Date(),
           });
-          incidentId = Number((createdIncident as any)?.insertId || 0) || undefined;
         }
 
         await db.createIdsDetection({
@@ -529,7 +597,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const evidenceId = nanoid();
-        const insert = await db.createForensicsEvidence({
+        const evidencePk = await db.createForensicsEvidence({
           evidenceId,
           incidentId: input.incidentId,
           filename: input.filename,
@@ -547,7 +615,6 @@ export const appRouter = router({
           chainOfCustody: [{ action: "collected", by: ctx.user?.name, at: new Date() }],
           createdAt: new Date(),
         });
-        const evidencePk = Number((insert as any)?.insertId || 0);
         if (evidencePk) {
           await db.createForensicsCustodyEvent({
             custodyEventId: nanoid(),
@@ -730,7 +797,10 @@ export const appRouter = router({
   }),
 
   iam: router({
-    createEvent: protectedProcedure
+    // ingestProcedure (not protectedProcedure): this route feeds
+    // ingestAndDetect, and every door into the detection pipeline shares
+    // the same rate budget — otherwise the front door's limit is theater.
+    createEvent: ingestProcedure
       .input(z.object({
         provider: z.string().default("okta"),
         actor: z.string(),
@@ -756,7 +826,7 @@ export const appRouter = router({
           timestamp: new Date(),
           createdAt: new Date(),
         });
-        await ingestAndDetect({
+        const detectionTriggered = await runDetectionBestEffort({
           sourceType: "iam",
           payload: {
             eventType: input.anomalyScore >= 75 ? "suspicious_login" : "authentication_failed",
@@ -769,14 +839,15 @@ export const appRouter = router({
           userId: ctx.user?.id,
         });
         await audit(ctx.user?.id, "iam.event.create", "iam_event", iamEventId, { actor: input.actor, action: input.action });
-        return { iamEventId, success: true };
+        return { iamEventId, success: true, detectionTriggered };
       }),
 
     list: protectedProcedure.input(z.object({ limit: z.number().default(100) })).query(async ({ input }) => db.getIamEvents(input.limit)),
   }),
 
   endpoint: router({
-    createTelemetry: protectedProcedure
+    // Rate-limited: invokes the detection pipeline (see iam.createEvent).
+    createTelemetry: ingestProcedure
       .input(z.object({
         endpointId: z.string().optional(),
         hostname: z.string(),
@@ -810,7 +881,7 @@ export const appRouter = router({
           timestamp: new Date(),
           createdAt: new Date(),
         });
-        await ingestAndDetect({
+        const detectionTriggered = await runDetectionBestEffort({
           sourceType: "endpoint",
           payload: {
             eventType: input.processName?.toLowerCase().includes("powershell") ? "suspicious_powershell" : "suspicious_process",
@@ -825,14 +896,15 @@ export const appRouter = router({
           userId: ctx.user?.id,
         });
         await audit(ctx.user?.id, "endpoint.telemetry.create", "endpoint_telemetry", telemetryId, { hostname: input.hostname });
-        return { telemetryId, success: true };
+        return { telemetryId, success: true, detectionTriggered };
       }),
 
     list: protectedProcedure.input(z.object({ limit: z.number().default(100) })).query(async ({ input }) => db.getEndpointTelemetry(input.limit)),
   }),
 
   cloud: router({
-    createFinding: protectedProcedure
+    // Rate-limited: invokes the detection pipeline (see iam.createEvent).
+    createFinding: ingestProcedure
       .input(z.object({
         provider: z.string().default("aws"),
         accountId: z.string().optional(),
@@ -858,7 +930,7 @@ export const appRouter = router({
           timestamp: new Date(),
           createdAt: new Date(),
         });
-        await ingestAndDetect({
+        const detectionTriggered = await runDetectionBestEffort({
           sourceType: "cloud",
           payload: {
             eventType: "cloud_misconfiguration",
@@ -870,14 +942,15 @@ export const appRouter = router({
           userId: ctx.user?.id,
         });
         await audit(ctx.user?.id, "cloud.finding.create", "cloud_finding", findingId, { findingType: input.findingType });
-        return { findingId, success: true };
+        return { findingId, success: true, detectionTriggered };
       }),
 
     list: protectedProcedure.input(z.object({ limit: z.number().default(100) })).query(async ({ input }) => db.getCloudFindings(input.limit)),
   }),
 
   phishing: router({
-    analyze: protectedProcedure
+    // Rate-limited: invokes the detection pipeline (see iam.createEvent).
+    analyze: ingestProcedure
       .input(z.object({
         subject: z.string(),
         sender: z.string(),
@@ -888,7 +961,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const result = await analyzePhishingEmail({ ...input, userId: ctx.user?.id });
-        await ingestAndDetect({
+        const detectionTriggered = await runDetectionBestEffort({
           sourceType: "phishing",
           payload: {
             eventType: "phishing_email",
@@ -900,7 +973,7 @@ export const appRouter = router({
           userId: ctx.user?.id,
         });
         await audit(ctx.user?.id, "phishing.analyze", "phishing_analysis", String(result.analysisId), { verdict: result.verdict });
-        return { success: true, ...result };
+        return { success: true, detectionTriggered, ...result };
       }),
 
     list: protectedProcedure.input(z.object({ limit: z.number().default(100) })).query(async ({ input }) => db.getPhishingAnalyses(input.limit)),

@@ -69,7 +69,31 @@ export default function OperationsPage() {
     custodyQuery.refetch();
   };
 
-  const ingestMutation = trpc.siem.ingestRawEvent.useMutation({ onSuccess: (data) => { toast.success(`Ingested event with ${data.detections.length} detections and ${data.alerts.length} alerts`); refreshAll(); }, onError: (error) => toast.error(error.message) });
+  const utils = trpc.useUtils();
+
+  // Ingestion is asynchronous: the server accepts the event and a queue
+  // worker processes it. Poll the job until it reaches a terminal state so
+  // the analyst still gets a concrete "N detections" outcome toast.
+  const pollIngestJob = async (ingestId: string) => {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const job = await utils.siem.getIngestJob.fetch({ ingestId });
+      if (job?.status === "completed") {
+        const result = (job.result ?? {}) as { detectionCount?: number; alertCount?: number; replayed?: boolean };
+        toast.success(`Event processed: ${result.detectionCount ?? 0} detections, ${result.alertCount ?? 0} alerts`);
+        refreshAll();
+        return;
+      }
+      if (job?.status === "failed") {
+        toast.error(`Event processing failed: ${job.error ?? "unknown error"}`);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    toast("Event accepted — still processing in the background");
+    refreshAll();
+  };
+
+  const ingestMutation = trpc.siem.ingestRawEvent.useMutation({ onSuccess: (data) => { toast.success("Event accepted for processing"); void pollIngestJob(data.ingestId); }, onError: (error) => toast.error(error.message) });
   const seedDemoMutation = trpc.siem.seedDemo.useMutation({ onSuccess: () => { toast.success("Demo data seeded"); refreshAll(); }, onError: (error) => toast.error(error.message) });
   const createAssetMutation = trpc.assets.create.useMutation({ onSuccess: () => { toast.success("Asset added"); assetsQuery.refetch(); }, onError: (error) => toast.error(error.message) });
   const iamMutation = trpc.iam.createEvent.useMutation({ onSuccess: () => { toast.success("IAM event recorded"); refreshAll(); }, onError: (e) => toast.error(e.message) });

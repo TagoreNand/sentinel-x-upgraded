@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import { TRPCError } from "@trpc/server";
 import * as db from "../db";
 
 export async function executeSoarPlaybook(input: {
@@ -10,7 +11,11 @@ export async function executeSoarPlaybook(input: {
 }) {
   const playbook = await db.getSoarPlaybookById(input.playbookId);
   if (!playbook) {
-    throw new Error("SOAR playbook not found");
+    // A deliberate TRPCError, not a plain Error: the production error
+    // formatter collapses unexpected errors to a generic message, so a plain
+    // throw here would reach the analyst as "An internal error occurred."
+    // instead of the actionable NOT_FOUND it actually is.
+    throw new TRPCError({ code: "NOT_FOUND", message: "SOAR playbook not found" });
   }
 
   const steps = Array.isArray(playbook.steps) ? playbook.steps : [];
@@ -28,7 +33,7 @@ export async function executeSoarPlaybook(input: {
           : "Action completed in simulation mode",
   }));
 
-  const executionInsert = await db.createSoarExecution({
+  const executionId = await db.createSoarExecution({
     executionId: nanoid(),
     playbookId: input.playbookId,
     incidentId: input.incidentId,
@@ -52,7 +57,7 @@ export async function executeSoarPlaybook(input: {
   }
 
   return {
-    executionId: Number((executionInsert as any)?.insertId || 0),
+    executionId,
     playbook: { id: playbook.id, name: playbook.name },
     output,
   };
