@@ -4,7 +4,9 @@ import superjson from "superjson";
 import type { TrpcContext } from "./context";
 import { AppError } from "./errors";
 import { ENV, envNumber } from "./env";
-import { TokenBucketLimiter } from "./rateLimit";
+import { logger } from "./logger";
+import { ResilientRateLimiter, TokenBucketLimiter, type AsyncRateLimiter } from "./rateLimit";
+import { RedisTokenBucketLimiter } from "./redisRateLimit";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -76,17 +78,52 @@ export const adminProcedure = t.procedure.use(
  * raise it without a deploy. TOO_MANY_REQUESTS maps to HTTP 429 — a signal
  * well-behaved shippers already understand as "back off and retry".
  */
-const ingestLimiter = new TokenBucketLimiter({
+const rlLog = logger.child({ component: "ingest-rate-limit" });
+const bucketConfig = {
   capacity: envNumber("INGEST_RATE_BURST", 20),
   refillPerSecond: envNumber("INGEST_RATE_PER_SECOND", 5),
-});
+};
+
+const localLimiter = new TokenBucketLimiter(bucketConfig);
 // unref() so the sweep timer never holds the process open during shutdown.
-setInterval(() => ingestLimiter.sweep(), 60_000).unref();
+setInterval(() => localLimiter.sweep(), 60_000).unref();
+
+// Redis makes the budget fleet-wide (one bucket per caller across every
+// replica); without it the budget silently multiplies by replica count —
+// fine for dev/single-node, warned about by boot validation in production.
+// On Redis failure, ResilientRateLimiter degrades to the per-pod bucket and
+// this throttled warning is the operator's signal.
+let degradedWarnAt = 0;
+let redisLimiter: RedisTokenBucketLimiter | null = null;
+let ingestLimiter: AsyncRateLimiter;
+if (process.env.REDIS_URL) {
+  redisLimiter = new RedisTokenBucketLimiter({
+    redisUrl: process.env.REDIS_URL,
+    ...bucketConfig,
+    prefix: "srl:ingest:",
+  });
+  ingestLimiter = new ResilientRateLimiter(redisLimiter, localLimiter, (error) => {
+    const now = Date.now();
+    if (now - degradedWarnAt > 30_000) {
+      degradedWarnAt = now;
+      rlLog.warn("redis rate limiter unreachable — degraded to per-pod limiting", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+} else {
+  ingestLimiter = { tryConsume: async (key) => localLimiter.tryConsume(key) };
+}
+
+/** Shutdown hook: closes the limiter's Redis connection, if one exists. */
+export async function closeIngestRateLimiter(): Promise<void> {
+  await redisLimiter?.close();
+}
 
 export const ingestProcedure = protectedProcedure.use(
   t.middleware(async ({ ctx, next }) => {
     const key = ctx.user ? `user:${ctx.user.id}` : `ip:${ctx.req.ip ?? "unknown"}`;
-    if (!ingestLimiter.tryConsume(key)) {
+    if (!(await ingestLimiter.tryConsume(key))) {
       throw new TRPCError({
         code: "TOO_MANY_REQUESTS",
         message: "Ingestion rate limit exceeded. Batch events or reduce request rate.",

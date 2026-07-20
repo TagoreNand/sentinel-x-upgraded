@@ -16,6 +16,39 @@ export type TokenBucketOptions = {
   refillPerSecond: number;
 };
 
+/** Common shape for local and distributed limiters. */
+export type AsyncRateLimiter = {
+  tryConsume(key: string): Promise<boolean>;
+};
+
+/**
+ * Primary/fallback composition for distributed rate limiting.
+ *
+ * Policy decision: when the shared store (Redis) is unreachable, the limiter
+ * degrades to the PER-POD bucket rather than failing open or closed. Failing
+ * open removes protection exactly when the system is already unhealthy;
+ * failing closed turns a Redis blip into a full ingestion outage. Local
+ * degradation keeps the per-caller budget enforced (multiplied by replica
+ * count — documented, bounded, and temporary). `onFallback` fires per
+ * degraded call so the caller can emit a throttled alert.
+ */
+export class ResilientRateLimiter implements AsyncRateLimiter {
+  constructor(
+    private readonly primary: AsyncRateLimiter,
+    private readonly fallback: TokenBucketLimiter,
+    private readonly onFallback?: (error: unknown) => void,
+  ) {}
+
+  async tryConsume(key: string): Promise<boolean> {
+    try {
+      return await this.primary.tryConsume(key);
+    } catch (error) {
+      this.onFallback?.(error);
+      return this.fallback.tryConsume(key);
+    }
+  }
+}
+
 type Bucket = { tokens: number; lastSeenMs: number };
 
 export class TokenBucketLimiter {

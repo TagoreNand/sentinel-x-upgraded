@@ -9,6 +9,8 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { closeDb, pingDb } from "../db";
 import { closeIngestQueue, initIngestQueue } from "../queue/ingestQueue";
+import { validateEnv } from "./env";
+import { closeIngestRateLimiter } from "./trpc";
 import { logger } from "./logger";
 
 const log = logger.child({ component: "server" });
@@ -33,6 +35,19 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Config contract check before anything binds or connects. A production
+  // pod with a missing/placeholder secret must CrashLoopBackOff with a named
+  // reason — not come up Ready and mint unsigned sessions.
+  const envIssues = validateEnv();
+  for (const issue of envIssues) {
+    if (issue.level === "fatal") log.error(`config: ${issue.message}`);
+    else log.warn(`config: ${issue.message}`);
+  }
+  if (envIssues.some((issue) => issue.level === "fatal")) {
+    log.error("fatal configuration errors — refusing to start");
+    process.exit(1);
+  }
+
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads
@@ -147,6 +162,7 @@ async function startServer() {
         // the pool. Reversed order would strand mid-job workers without a
         // database.
         await closeIngestQueue();
+        await closeIngestRateLimiter();
         await closeDb();
         log.info("shutdown complete");
         process.exit(0);

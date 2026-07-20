@@ -29,6 +29,9 @@ services:
       PORT: 3000
       DATABASE_URL: mysql://root:password@db:3306/sentinelx
       REDIS_URL: redis://redis:6379
+      # Compose is a local prod-mode harness, not production. Boot validation
+      # requires a real-looking secret; this one is deliberately self-naming.
+      JWT_SECRET: local-compose-only-secret-do-not-deploy-0000
     ports:
       - "3000:3000"
 

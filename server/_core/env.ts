@@ -9,6 +9,48 @@ export const ENV = {
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
 };
 
+export type EnvIssue = { level: "fatal" | "warn"; message: string };
+
+const PLACEHOLDER_SECRET = /^(changeme|change-me|secret|password|example|placeholder|test|xxx+|todo)$/i;
+
+/**
+ * Boot-time configuration validation. The contract with the secret store
+ * (Vault / AWS Secrets Manager / ExternalSecrets → k8s Secret → env) is that
+ * secrets ARRIVE as environment variables — which means a broken secret
+ * mount looks exactly like a typo'd .env. In production that must be a
+ * refused boot with a named reason, not a pod that comes up Ready and mints
+ * unsigned sessions. Pure function over an env snapshot so it is testable.
+ */
+export function validateEnv(env: NodeJS.ProcessEnv = process.env): EnvIssue[] {
+  const issues: EnvIssue[] = [];
+  const isProd = env.NODE_ENV === "production";
+  const prodFatal = isProd ? "fatal" : "warn";
+
+  const jwtSecret = env.JWT_SECRET ?? "";
+  if (!jwtSecret) {
+    issues.push({ level: prodFatal, message: "JWT_SECRET is not set — sessions cannot be signed; provision it from the secret store" });
+  } else if (PLACEHOLDER_SECRET.test(jwtSecret)) {
+    issues.push({ level: "fatal", message: "JWT_SECRET is a placeholder value — generate a real secret (e.g. openssl rand -base64 48)" });
+  } else if (jwtSecret.length < 32) {
+    issues.push({ level: prodFatal, message: "JWT_SECRET is shorter than 32 characters — too weak for HMAC session signing" });
+  }
+
+  if (!env.DATABASE_URL) {
+    issues.push({ level: prodFatal, message: "DATABASE_URL is not set — persistence and readiness will fail" });
+  } else if (isProd && /:(password|root|changeme|secret)@/i.test(env.DATABASE_URL)) {
+    issues.push({ level: "warn", message: "DATABASE_URL appears to use a default credential — rotate it and source it from the secret store" });
+  }
+
+  if (isProd && !env.REDIS_URL) {
+    issues.push({ level: "warn", message: "REDIS_URL is not set — ingestion queue and rate limiting degrade to per-pod in-memory mode" });
+  }
+  if (isProd && !env.OAUTH_SERVER_URL) {
+    issues.push({ level: "warn", message: "OAUTH_SERVER_URL is not set — interactive login is unavailable" });
+  }
+
+  return issues;
+}
+
 /**
  * Parse a positive numeric env var, falling back on absence OR garbage.
  * `Number("abc")` is NaN and NaN slips through every `<`/`<=` guard, so raw
