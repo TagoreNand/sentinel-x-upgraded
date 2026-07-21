@@ -9,6 +9,24 @@ export const ENV = {
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
 };
 
+import { isRole, type Role } from "@shared/roles";
+
+/**
+ * Role assigned to a brand-new authenticated user on first login. Defaults to
+ * `analyst` (can investigate immediately) rather than `viewer`, so onboarding
+ * is not a locked-out experience; a stricter deployment can set
+ * DEFAULT_NEW_USER_ROLE=viewer and have an admin promote explicitly. A typo'd
+ * value degrades to the safe default with a warning — never to an unintended
+ * higher tier.
+ */
+export function resolveDefaultRole(): Role {
+  const raw = process.env.DEFAULT_NEW_USER_ROLE;
+  if (raw === undefined || raw === "") return "analyst";
+  if (isRole(raw)) return raw;
+  console.warn(`[env] DEFAULT_NEW_USER_ROLE="${raw}" is not a valid role; using default 'analyst'`);
+  return "analyst";
+}
+
 export type EnvIssue = { level: "fatal" | "warn"; message: string };
 
 const PLACEHOLDER_SECRET = /^(changeme|change-me|secret|password|example|placeholder|test|xxx+|todo)$/i;

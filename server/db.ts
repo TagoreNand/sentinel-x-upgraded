@@ -42,7 +42,8 @@ import {
   ingestJobs,
   type IngestJob,
 } from "../drizzle/schema";
-import { ENV, envNumber } from "./_core/env";
+import { ENV, envNumber, resolveDefaultRole } from "./_core/env";
+import type { Role } from "@shared/roles";
 import { DatabaseUnavailableError } from "./_core/errors";
 import { logger } from "./_core/logger";
 
@@ -157,11 +158,20 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       updateSet.lastSignedIn = user.lastSignedIn;
     }
     if (user.role !== undefined) {
+      // Explicit role from the caller (e.g. an admin-initiated role change).
       values.role = user.role;
       updateSet.role = user.role;
     } else if (user.openId === ENV.ownerOpenId) {
+      // Owner is a permanent admin anchor, re-asserted on every login so the
+      // platform can never be left without an admin.
       values.role = "admin";
       updateSet.role = "admin";
+    } else {
+      // New user: assign the configured default on INSERT only. Deliberately
+      // absent from updateSet so a returning user's assigned role (an admin
+      // promotion, a lead grant) survives their next login instead of being
+      // reset to the default.
+      values.role = resolveDefaultRole();
     }
 
     if (!values.lastSignedIn) {
@@ -185,6 +195,36 @@ export async function getUserByOpenId(openId: string) {
   const db = await getDb();
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
   return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getUserById(id: number) {
+  const db = await getDb();
+  const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+  return result[0];
+}
+
+/** User directory for the admin role-management surface. */
+export async function getUsers(limit = 200) {
+  const db = await getDb();
+  return await db
+    .select({
+      id: users.id,
+      openId: users.openId,
+      name: users.name,
+      email: users.email,
+      role: users.role,
+      loginMethod: users.loginMethod,
+      lastSignedIn: users.lastSignedIn,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .orderBy(desc(users.createdAt))
+    .limit(limit);
+}
+
+export async function updateUserRole(id: number, role: Role): Promise<void> {
+  const db = await getDb();
+  await db.update(users).set({ role, updatedAt: new Date() }).where(eq(users.id, id));
 }
 
 // ============================================================================

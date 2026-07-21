@@ -1,4 +1,5 @@
 import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
+import { roleAtLeast, type Role } from '@shared/roles';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
@@ -49,24 +50,35 @@ const requireUser = t.middleware(async opts => {
   });
 });
 
+/** Any authenticated user (viewer and above). Use for read-only queries. */
 export const protectedProcedure = t.procedure.use(requireUser);
 
-export const adminProcedure = t.procedure.use(
-  t.middleware(async opts => {
-    const { ctx, next } = opts;
-
-    if (!ctx.user || ctx.user.role !== 'admin') {
+/**
+ * Minimum-tier gate over the total role ordering. Because the hierarchy is
+ * totally ordered, a single rank comparison enforces "this tier or higher" —
+ * `admin` satisfies `requireRole('analyst')` for free, and there is no way to
+ * grant a capability to a lower tier without also granting it to every tier
+ * above. The user is re-narrowed into ctx so downstream resolvers see a
+ * non-null `user`.
+ */
+function requireRole(minRole: Role) {
+  return t.middleware(async ({ ctx, next }) => {
+    if (!ctx.user) {
+      throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
+    }
+    if (!roleAtLeast(ctx.user.role, minRole)) {
       throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
     }
+    return next({ ctx: { ...ctx, user: ctx.user } });
+  });
+}
 
-    return next({
-      ctx: {
-        ...ctx,
-        user: ctx.user,
-      },
-    });
-  }),
-);
+/** Investigative mutations: ingest, incidents, evidence, IOCs, scans. */
+export const analystProcedure = t.procedure.use(requireRole("analyst"));
+/** Privileged: IDS rule authoring (pipeline-executed) and SOAR orchestration. */
+export const leadProcedure = t.procedure.use(requireRole("lead"));
+/** Platform governance: user role management, audit logs, seed/destructive ops. */
+export const adminProcedure = t.procedure.use(requireRole("admin"));
 
 /**
  * Rate-limited procedure for ingestion endpoints.
@@ -120,7 +132,10 @@ export async function closeIngestRateLimiter(): Promise<void> {
   await redisLimiter?.close();
 }
 
-export const ingestProcedure = protectedProcedure.use(
+// Ingestion is an analyst-tier mutation (it creates events, detections, and
+// incidents) AND rate-limited — so it composes the analyst gate with the
+// throttle. A viewer is rejected with FORBIDDEN before a token is spent.
+export const ingestProcedure = analystProcedure.use(
   t.middleware(async ({ ctx, next }) => {
     const key = ctx.user ? `user:${ctx.user.id}` : `ip:${ctx.req.ip ?? "unknown"}`;
     if (!(await ingestLimiter.tryConsume(key))) {

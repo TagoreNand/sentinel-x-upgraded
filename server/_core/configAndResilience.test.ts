@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { validateEnv } from "./env";
+import { afterEach, describe, expect, it } from "vitest";
+import { resolveDefaultRole, validateEnv } from "./env";
 import { ResilientRateLimiter, TokenBucketLimiter, type AsyncRateLimiter } from "./rateLimit";
 
 const GOOD_SECRET = "a-perfectly-reasonable-session-secret-with-length";
@@ -45,6 +45,27 @@ describe("validateEnv", () => {
     });
     expect(issues.some((i) => i.level === "warn" && i.message.includes("default credential"))).toBe(true);
     expect(issues.filter((i) => i.level === "fatal")).toEqual([]);
+  });
+});
+
+describe("resolveDefaultRole", () => {
+  afterEach(() => {
+    delete process.env.DEFAULT_NEW_USER_ROLE;
+  });
+
+  it("defaults to analyst when unset", () => {
+    delete process.env.DEFAULT_NEW_USER_ROLE;
+    expect(resolveDefaultRole()).toBe("analyst");
+  });
+
+  it("honors a valid configured role", () => {
+    process.env.DEFAULT_NEW_USER_ROLE = "viewer";
+    expect(resolveDefaultRole()).toBe("viewer");
+  });
+
+  it("degrades a garbage value to analyst rather than a higher tier", () => {
+    process.env.DEFAULT_NEW_USER_ROLE = "superadmin";
+    expect(resolveDefaultRole()).toBe("analyst");
   });
 });
 

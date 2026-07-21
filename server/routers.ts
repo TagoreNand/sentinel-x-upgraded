@@ -1,8 +1,11 @@
 import { COOKIE_NAME } from "@shared/const";
+import { TRPCError } from "@trpc/server";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { adminProcedure, ingestProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import { adminProcedure, analystProcedure, ingestProcedure, leadProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { logger } from "./_core/logger";
+import { ENV } from "./_core/env";
+import { assertRoleAssignable, ROLES } from "@shared/roles";
 import { z } from "zod";
 import { nanoid } from "nanoid";
 import * as db from "./db";
@@ -77,7 +80,7 @@ export const appRouter = router({
   }),
 
   assets: router({
-    create: protectedProcedure
+    create: analystProcedure
       .input(z.object({
         hostname: z.string(),
         ipAddress: z.string().optional(),
@@ -117,7 +120,7 @@ export const appRouter = router({
   }),
 
   siem: router({
-    createEvent: protectedProcedure
+    createEvent: analystProcedure
       .input(z.object({
         sourceIp: z.string().optional(),
         destinationIp: z.string().optional(),
@@ -220,7 +223,7 @@ export const appRouter = router({
       .input(z.object({ severity: severitySchema, limit: z.number().default(50) }))
       .query(async ({ input }) => db.getSecurityEventsBySeverity(input.severity, input.limit)),
 
-    createAlert: protectedProcedure
+    createAlert: analystProcedure
       .input(z.object({
         title: z.string(),
         description: z.string().optional(),
@@ -264,7 +267,7 @@ export const appRouter = router({
   }),
 
   incidents: router({
-    create: protectedProcedure
+    create: analystProcedure
       .input(z.object({
         title: z.string(),
         description: z.string().optional(),
@@ -298,7 +301,7 @@ export const appRouter = router({
     getById: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => db.getIncidentById(input.id)),
     getByStatus: protectedProcedure.input(z.object({ status: z.enum(["open", "investigating", "contained", "resolved"]) })).query(async ({ input }) => db.getIncidentsByStatus(input.status)),
 
-    updateStatus: protectedProcedure
+    updateStatus: analystProcedure
       .input(z.object({ id: z.number(), status: z.enum(["open", "investigating", "contained", "resolved"]) }))
       .mutation(async ({ input, ctx }) => {
         await db.updateIncidentStatus(input.id, input.status);
@@ -315,7 +318,7 @@ export const appRouter = router({
 
     getStats: protectedProcedure.query(async () => db.getIncidentStats()),
 
-    addPlaybookStep: protectedProcedure
+    addPlaybookStep: analystProcedure
       .input(z.object({
         incidentId: z.number(),
         stepNumber: z.number(),
@@ -342,7 +345,7 @@ export const appRouter = router({
   }),
 
   threatIntel: router({
-    createIOC: protectedProcedure
+    createIOC: analystProcedure
       .input(z.object({
         iocType: z.enum(["ip", "domain", "url", "hash", "email", "file", "process", "registry"]),
         iocValue: z.string(),
@@ -378,7 +381,7 @@ export const appRouter = router({
 
     searchIOC: protectedProcedure.input(z.object({ value: z.string() })).query(async ({ input }) => db.searchIOC(input.value)),
 
-    createThreatActor: protectedProcedure
+    createThreatActor: analystProcedure
       .input(z.object({
         name: z.string(),
         aliases: z.array(z.string()).optional(),
@@ -411,7 +414,7 @@ export const appRouter = router({
   }),
 
   vulnerabilityScanning: router({
-    createScan: protectedProcedure
+    createScan: analystProcedure
       .input(z.object({
         targetHost: z.string(),
         targetIp: z.string().optional(),
@@ -436,7 +439,7 @@ export const appRouter = router({
         return { scanId, success: true };
       }),
 
-    runScan: protectedProcedure
+    runScan: analystProcedure
       .input(z.object({
         targetHost: z.string(),
         targetIp: z.string().optional(),
@@ -462,7 +465,7 @@ export const appRouter = router({
     getScans: protectedProcedure.input(z.object({ limit: z.number().default(50) })).query(async ({ input }) => db.getVulnerabilityScans(input.limit)),
     getVulnerabilities: protectedProcedure.input(z.object({ scanId: z.number() })).query(async ({ input }) => db.getVulnerabilitiesByScan(input.scanId)),
 
-    addVulnerability: protectedProcedure
+    addVulnerability: analystProcedure
       .input(z.object({
         scanId: z.number(),
         cveId: z.string().optional(),
@@ -494,7 +497,11 @@ export const appRouter = router({
   }),
 
   ids: router({
-    createRule: protectedProcedure
+    // leadProcedure: IDS rules carry regex/keyword logic the ingestion
+    // pipeline EXECUTES against every event. Authoring one changes what the
+    // platform does, not just what it records — a lead-tier capability, and
+    // the specific privilege-escalation this RBAC pass closes.
+    createRule: leadProcedure
       .input(z.object({
         ruleName: z.string(),
         description: z.string().optional(),
@@ -535,7 +542,7 @@ export const appRouter = router({
 
     getRules: protectedProcedure.input(z.object({ enabled: z.boolean().default(true) })).query(async ({ input }) => db.getIdsRules(input.enabled)),
 
-    createDetection: protectedProcedure
+    createDetection: analystProcedure
       .input(z.object({
         ruleId: z.number(),
         eventId: z.number().optional(),
@@ -581,7 +588,7 @@ export const appRouter = router({
   }),
 
   forensics: router({
-    createEvidence: protectedProcedure
+    createEvidence: analystProcedure
       .input(z.object({
         incidentId: z.number().optional(),
         filename: z.string(),
@@ -637,7 +644,7 @@ export const appRouter = router({
 
     getEvidenceByIncident: protectedProcedure.input(z.object({ incidentId: z.number() })).query(async ({ input }) => db.getForensicsEvidenceByIncident(input.incidentId)),
 
-    addCustodyEvent: protectedProcedure
+    addCustodyEvent: analystProcedure
       .input(z.object({
         evidenceId: z.number(),
         action: z.string(),
@@ -667,7 +674,7 @@ export const appRouter = router({
 
     getCustody: protectedProcedure.input(z.object({ evidenceId: z.number() })).query(async ({ input }) => db.getForensicsCustodyEvents(input.evidenceId)),
 
-    addTimelineEvent: protectedProcedure
+    addTimelineEvent: analystProcedure
       .input(z.object({
         incidentId: z.number(),
         eventDescription: z.string(),
@@ -694,7 +701,7 @@ export const appRouter = router({
 
     getTimeline: protectedProcedure.input(z.object({ incidentId: z.number() })).query(async ({ input }) => db.getForensicsTimeline(input.incidentId)),
 
-    linkArtifact: protectedProcedure
+    linkArtifact: analystProcedure
       .input(z.object({
         incidentId: z.number(),
         artifactType: z.string(),
@@ -738,7 +745,7 @@ export const appRouter = router({
   }),
 
   honeypot: router({
-    create: protectedProcedure
+    create: analystProcedure
       .input(z.object({
         name: z.string(),
         description: z.string().optional(),
@@ -766,7 +773,7 @@ export const appRouter = router({
 
     list: protectedProcedure.query(async () => db.getHoneypots()),
 
-    recordInteraction: protectedProcedure
+    recordInteraction: analystProcedure
       .input(z.object({
         honeypotId: z.number(),
         attackerIp: z.string(),
@@ -980,7 +987,8 @@ export const appRouter = router({
   }),
 
   soar: router({
-    createPlaybook: protectedProcedure
+    // leadProcedure: SOAR playbooks encode automated response actions.
+    createPlaybook: leadProcedure
       .input(z.object({
         name: z.string(),
         description: z.string().optional(),
@@ -1007,7 +1015,8 @@ export const appRouter = router({
 
     listPlaybooks: protectedProcedure.input(z.object({ limit: z.number().default(100) })).query(async ({ input }) => db.getSoarPlaybooks(input.limit)),
 
-    execute: protectedProcedure
+    // leadProcedure: executing a playbook fires (simulated) response actions.
+    execute: leadProcedure
       .input(z.object({
         playbookId: z.number(),
         incidentId: z.number().optional(),
@@ -1025,6 +1034,44 @@ export const appRouter = router({
 
   platform: router({
     getAuditLogs: adminProcedure.input(z.object({ limit: z.number().default(200) })).query(async ({ input }) => db.getPlatformAuditLogs(input.limit)),
+  }),
+
+  admin: router({
+    listUsers: adminProcedure
+      .input(z.object({ limit: z.number().int().positive().max(500).default(200) }))
+      .query(async ({ input }) => db.getUsers(input.limit)),
+
+    setUserRole: adminProcedure
+      .input(z.object({ userId: z.number().int().positive(), role: z.enum(ROLES) }))
+      .mutation(async ({ input, ctx }) => {
+        const target = await db.getUserById(input.userId);
+        if (!target) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
+        }
+        // Policy is a pure, tested function (assertRoleAssignable): no
+        // self-role-change, the owner stays a permanent admin anchor, and the
+        // target role must be a real tier. adminProcedure already guarantees
+        // the caller is an admin; passing actorRole keeps the policy honest
+        // even if this endpoint is ever re-gated.
+        const decision = assertRoleAssignable({
+          actorRole: ctx.user.role,
+          actorUserId: ctx.user.id,
+          targetUserId: target.id,
+          targetOpenId: target.openId,
+          ownerOpenId: ENV.ownerOpenId,
+          newRole: input.role,
+        });
+        if (!decision.ok) {
+          throw new TRPCError({ code: "FORBIDDEN", message: decision.reason });
+        }
+        await db.updateUserRole(target.id, input.role);
+        await audit(ctx.user.id, "admin.user.role.set", "user", String(target.id), {
+          targetOpenId: target.openId,
+          previousRole: target.role,
+          newRole: input.role,
+        });
+        return { success: true, userId: target.id, role: input.role };
+      }),
   }),
 
   dashboard: router({

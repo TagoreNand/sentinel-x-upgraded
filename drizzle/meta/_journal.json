@@ -36,6 +36,13 @@
       "when": 1784073600000,
       "tag": "0004_ingest_queue",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1784592000000,
+      "tag": "0005_rbac_roles",
+      "breakpoints": true
     }
   ]
 }

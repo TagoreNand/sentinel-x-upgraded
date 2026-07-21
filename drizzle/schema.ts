@@ -1,4 +1,8 @@
 import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, index, uniqueIndex } from "drizzle-orm/mysql-core";
+// Relative import (not the @shared alias): drizzle-kit resolves schema.ts
+// without the app's tsconfig path aliases, so a bare relative path is the
+// portable choice here.
+import { ROLES } from "../shared/roles";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -6,7 +10,10 @@ export const users = mysqlTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
+  // Defaults to the LEAST-privilege tier at the storage layer. The app layer
+  // (upsertUser) assigns a more useful default for real logins; this column
+  // default is the paranoid fallback for any row created outside that path.
+  role: mysqlEnum("role", ROLES).default("viewer").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
