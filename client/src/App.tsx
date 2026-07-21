@@ -9,14 +9,17 @@ import Dashboard from "./pages/Dashboard";
 import IncidentsPage from "./pages/IncidentsPage";
 import { SiemModule, ThreatIntelModule, VulnerabilityScannerModule, IdsModule, CryptographyModule, HoneypotModule } from "./pages/Modules";
 import OperationsPage from "./pages/OperationsPage";
+import AdminUsersPage, { RoleBadge } from "./pages/AdminUsersPage";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Shield, Radar, Eye, Zap, Lock, Skull, AlertTriangle, Settings, ShieldCheck } from "lucide-react";
+import { Shield, Radar, Eye, Zap, Lock, Skull, AlertTriangle, Settings, ShieldCheck, Users } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { useRole } from "@/_core/hooks/useRole";
 import { getLoginUrl } from "@/const";
 
 function SocLayout({ children }: { children: React.ReactNode }) {
   const { user, logout, isAuthenticated } = useAuth();
+  const { isAdmin } = useRole();
 
   return (
     <div className="min-h-screen bg-background text-foreground flex">
@@ -71,6 +74,16 @@ function SocLayout({ children }: { children: React.ReactNode }) {
               Operations
             </a>
           </div>
+
+          {isAdmin && (
+            <div className="pt-4 border-t border-border">
+              <p className="px-4 py-2 text-xs font-semibold text-muted-foreground uppercase">Administration</p>
+              <a href="/admin/users" className="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-accent/10 transition-colors text-sm">
+                <Users className="w-4 h-4 text-amber-500" />
+                User Management
+              </a>
+            </div>
+          )}
         </nav>
 
         {/* User Info */}
@@ -80,6 +93,9 @@ function SocLayout({ children }: { children: React.ReactNode }) {
               <div className="text-sm">
                 <p className="text-xs text-muted-foreground">Logged in as</p>
                 <p className="font-medium truncate">{user.name || user.email}</p>
+                <div className="mt-1">
+                  <RoleBadge role={user.role} />
+                </div>
               </div>
               <Button onClick={logout} variant="outline" className="w-full text-xs" size="sm">
                 Logout
@@ -151,6 +167,7 @@ function Router() {
         <Route path="/dashboard" component={Dashboard} />
         <Route path="/incidents" component={IncidentsPage} />
         <Route path="/operations" component={OperationsPage} />
+        <Route path="/admin/users" component={AdminUsersPage} />
         <Route
           path="/siem"
           component={() => (

@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertTriangle, Shield, Eye, Zap, Lock, Database, Radar, Skull } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { useRole } from "@/_core/hooks/useRole";
 import { toast } from "sonner";
 
 // ============================================================================
@@ -260,6 +261,11 @@ export function VulnerabilityScannerModule() {
 // ============================================================================
 
 export function IdsModule() {
+  // Rule authoring is lead-gated: the pattern here becomes detection logic the
+  // ingestion pipeline executes against every event. The server enforces this
+  // (leadProcedure); the UI reflects it so analysts aren't handed a button
+  // that only 403s.
+  const { isLead } = useRole();
   const [ruleForm, setRuleForm] = useState({
     ruleName: "",
     pattern: "",
@@ -328,9 +334,14 @@ export function IdsModule() {
               </Select>
             </div>
           </div>
-          <Button onClick={handleCreateRule} className="w-full" disabled={createRuleMutation.isPending}>
+          <Button onClick={handleCreateRule} className="w-full" disabled={createRuleMutation.isPending || !isLead}>
             {createRuleMutation.isPending ? "Creating..." : "Create IDS Rule"}
           </Button>
+          {!isLead && (
+            <p className="text-xs text-muted-foreground text-center">
+              Authoring detection rules requires the <span className="text-purple-300">lead</span> role.
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>

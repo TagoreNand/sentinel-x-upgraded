@@ -34,3 +34,44 @@ jobs:
 
       - name: Build
         run: pnpm run build
+
+  integration:
+    runs-on: ubuntu-latest
+    # Real MySQL as a service container. The integration suite reads
+    # INTEGRATION_DATABASE_URL and skips its testcontainers path here — a
+    # service container is faster and more reliable in CI than Docker-in-Docker.
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: testpw
+          MYSQL_DATABASE: sentinelx
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -ptestpw"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10.4.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run integration tests
+        run: pnpm run test:integration
+        env:
+          INTEGRATION_DATABASE_URL: mysql://root:testpw@127.0.0.1:3306/sentinelx

@@ -15,5 +15,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["server/**/*.test.ts", "server/**/*.spec.ts", "shared/**/*.test.ts", "shared/**/*.spec.ts"],
+    // Integration tests (real MySQL) run via vitest.integration.config.ts.
+    exclude: ["**/node_modules/**", "**/*.integration.test.ts"],
   },
 });

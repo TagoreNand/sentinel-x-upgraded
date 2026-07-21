@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { useRole } from "@/_core/hooks/useRole";
 import { ShieldCheck, Activity, Search, Bot, FolderSearch } from "lucide-react";
 
 function SeverityBadge({ value }: { value: string }) {
@@ -22,6 +23,9 @@ function SeverityBadge({ value }: { value: string }) {
 }
 
 export default function OperationsPage() {
+  // SOAR authoring/execution is lead-gated server-side (leadProcedure); mirror
+  // that in the UI so the buttons aren't dead ends for analysts.
+  const { isLead } = useRole();
   const [sourceType, setSourceType] = useState("syslog");
   const [rawPayload, setRawPayload] = useState("Apr 10 12:00:01 web-01 sshd[101]: Failed password for invalid user admin from 91.240.118.12 port 49222 ssh2");
   const [assetForm, setAssetForm] = useState({ hostname: "web-01.prod.internal", ipAddress: "10.10.1.25", criticality: "critical" });
@@ -393,13 +397,14 @@ export default function OperationsPage() {
                   <Input placeholder="Playbook name" value={soarForm.name} onChange={(e) => setSoarForm({ ...soarForm, name: e.target.value })} />
                   <Input placeholder="Trigger type" value={soarForm.triggerType} onChange={(e) => setSoarForm({ ...soarForm, triggerType: e.target.value })} />
                   <Textarea rows={5} value={playbookJson} onChange={(e) => setPlaybookJson(e.target.value)} />
-                  <Button className="w-full" onClick={() => {
+                  <Button className="w-full" disabled={!isLead} onClick={() => {
                     try {
                       createPlaybookMutation.mutate({ name: soarForm.name, triggerType: soarForm.triggerType, steps: JSON.parse(playbookJson) });
                     } catch {
                       toast.error("Steps must be valid JSON");
                     }
                   }}>Create Playbook</Button>
+                  {!isLead && <p className="text-xs text-muted-foreground">SOAR authoring &amp; execution requires the <span className="text-purple-300">lead</span> role.</p>}
                   <div className="space-y-2 pt-2">
                     {playbooksQuery.data?.map((item: any) => (
                       <div key={item.id} className="border border-border rounded-lg p-3 flex items-center justify-between gap-3">
@@ -407,7 +412,7 @@ export default function OperationsPage() {
                           <div className="text-sm font-medium">{item.name}</div>
                           <div className="text-xs text-muted-foreground">{item.triggerType}</div>
                         </div>
-                        <Button size="sm" variant="outline" onClick={() => executePlaybookMutation.mutate({ playbookId: item.id, incidentId: caseIncidentId || firstIncidentId, triggerEntityType: "manual" })}>Run</Button>
+                        <Button size="sm" variant="outline" disabled={!isLead} onClick={() => executePlaybookMutation.mutate({ playbookId: item.id, incidentId: caseIncidentId || firstIncidentId, triggerEntityType: "manual" })}>Run</Button>
                       </div>
                     ))}
                   </div>
