@@ -271,6 +271,13 @@ export function IdsModule() {
     pattern: "",
     severity: "medium" as const,
   });
+  const [sigmaYaml, setSigmaYaml] = useState("");
+  const [sigmaResult, setSigmaResult] = useState<{
+    createdCount: number;
+    skippedCount: number;
+    created: { ruleName: string; warnings: string[] }[];
+    skipped: { title: string; reason: string }[];
+  } | null>(null);
 
   const createRuleMutation = trpc.ids.createRule.useMutation({
     onSuccess: () => {
@@ -280,6 +287,15 @@ export function IdsModule() {
     onError: (error) => {
       toast.error(`Error: ${error.message}`);
     },
+  });
+
+  const importSigmaMutation = trpc.ids.importSigma.useMutation({
+    onSuccess: (data) => {
+      setSigmaResult(data);
+      toast.success(`Imported ${data.createdCount} rule(s), skipped ${data.skippedCount}`);
+      if (data.createdCount > 0) setSigmaYaml("");
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   const handleCreateRule = () => {
@@ -341,6 +357,61 @@ export function IdsModule() {
             <p className="text-xs text-muted-foreground text-center">
               Authoring detection rules requires the <span className="text-purple-300">lead</span> role.
             </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="neon-border bg-card/50 backdrop-blur">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="w-5 h-5 text-purple-400" />
+            Import Sigma Rules
+          </CardTitle>
+          <CardDescription>
+            Paste Sigma YAML (single or multi-document). Rules that cannot be translated faithfully are skipped with a reason
+            rather than silently mistranslated.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Textarea
+            placeholder={"title: SSH brute force\nlogsource:\n  category: authentication\ndetection:\n  selection:\n    eventType: authentication_failed\n  condition: selection | count() by sourceIp > 5\nlevel: high\ntags:\n  - attack.credential_access\n  - attack.t1110"}
+            value={sigmaYaml}
+            onChange={(e) => setSigmaYaml(e.target.value)}
+            rows={10}
+            className="font-mono text-xs"
+          />
+          <Button
+            onClick={() => {
+              if (!sigmaYaml.trim()) {
+                toast.error("Paste Sigma YAML to import");
+                return;
+              }
+              importSigmaMutation.mutate({ yaml: sigmaYaml });
+            }}
+            className="w-full"
+            disabled={importSigmaMutation.isPending || !isLead}
+          >
+            {importSigmaMutation.isPending ? "Importing..." : "Import Sigma"}
+          </Button>
+          {!isLead && (
+            <p className="text-xs text-muted-foreground text-center">
+              Importing detection rules requires the <span className="text-purple-300">lead</span> role.
+            </p>
+          )}
+          {sigmaResult && (
+            <div className="space-y-2 text-sm">
+              <div className="flex gap-2">
+                <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30">{sigmaResult.createdCount} created</Badge>
+                {sigmaResult.skippedCount > 0 && (
+                  <Badge className="bg-yellow-500/20 text-yellow-300 border-yellow-500/30">{sigmaResult.skippedCount} skipped</Badge>
+                )}
+              </div>
+              {sigmaResult.skipped.map((s, i) => (
+                <div key={i} className="text-xs text-muted-foreground border border-border rounded p-2">
+                  <span className="font-medium text-foreground">{s.title}</span>: {s.reason}
+                </div>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>

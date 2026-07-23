@@ -15,6 +15,7 @@ import { runVulnerabilityScan } from "./security/vulnerability";
 import { analyzePhishingEmail } from "./security/phishing";
 import { executeSoarPlaybook } from "./security/soar";
 import { seedDemoSecurityData } from "./security/demoData";
+import { translateSigmaRules } from "./security/sigma";
 
 const jsonRecord = z.record(z.string(), z.any());
 const severitySchema = z.enum(["critical", "high", "medium", "low"]);
@@ -541,6 +542,49 @@ export const appRouter = router({
       }),
 
     getRules: protectedProcedure.input(z.object({ enabled: z.boolean().default(true) })).query(async ({ input }) => db.getIdsRules(input.enabled)),
+
+    // Sigma import is rule authoring by another name — same lead gate as
+    // createRule, since imported rules become detection logic the pipeline
+    // executes. The translator fails closed: rules it cannot render faithfully
+    // are returned as `skipped` with a reason, never silently mistranslated.
+    importSigma: leadProcedure
+      .input(z.object({ yaml: z.string().min(1).max(200_000) }))
+      .mutation(async ({ input, ctx }) => {
+        const translations = translateSigmaRules(input.yaml);
+        const created: { ruleId: string; ruleName: string; warnings: string[] }[] = [];
+        const skipped: { title: string; reason: string }[] = [];
+
+        for (const translation of translations) {
+          if (!translation.imported) {
+            skipped.push({ title: translation.title, reason: translation.reason });
+            continue;
+          }
+          const ruleId = nanoid();
+          await db.createIdsRule({
+            ruleId,
+            ruleName: translation.rule.ruleName,
+            description: translation.rule.description,
+            ruleType: translation.rule.ruleType,
+            dataSource: translation.rule.dataSource,
+            detectionLogic: translation.rule.detectionLogic,
+            severity: translation.rule.severity,
+            attackTechnique: translation.rule.attackTechnique,
+            attackTactic: translation.rule.attackTactic,
+            thresholdCount: translation.rule.thresholdCount,
+            thresholdWindowMinutes: translation.rule.thresholdWindowMinutes,
+            enabled: true,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+          created.push({ ruleId, ruleName: translation.rule.ruleName, warnings: translation.warnings });
+        }
+
+        await audit(ctx.user.id, "ids.sigma.import", "ids_rule", undefined, {
+          created: created.length,
+          skipped: skipped.length,
+        });
+        return { created, skipped, createdCount: created.length, skippedCount: skipped.length };
+      }),
 
     createDetection: analystProcedure
       .input(z.object({
