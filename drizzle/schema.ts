@@ -599,6 +599,48 @@ export const ingestJobs = mysqlTable("ingest_jobs", {
 export type IngestJob = typeof ingestJobs.$inferSelect;
 export type InsertIngestJob = typeof ingestJobs.$inferInsert;
 
+// ============================================================================
+// NOTIFICATION CHANNELS & DELIVERY LEDGER
+// ============================================================================
+
+export const notificationChannels = mysqlTable("notification_channels", {
+  id: int("id").autoincrement().primaryKey(),
+  channelId: varchar("channelId", { length: 64 }).notNull().unique(),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["slack", "webhook", "email"]).notNull(),
+  // Slack incoming-webhook URL, generic webhook URL, or email recipient.
+  target: varchar("target", { length: 1024 }).notNull(),
+  // Only incidents at or above this severity notify this channel.
+  minSeverity: mysqlEnum("minSeverity", ["critical", "high", "medium", "low"]).default("high").notNull(),
+  enabled: boolean("enabled").default(true).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+}, (table) => ({
+  enabledIdx: index("idx_channel_enabled").on(table.enabled),
+}));
+
+export type NotificationChannel = typeof notificationChannels.$inferSelect;
+export type InsertNotificationChannel = typeof notificationChannels.$inferInsert;
+
+export const notificationDeliveries = mysqlTable("notification_deliveries", {
+  id: int("id").autoincrement().primaryKey(),
+  deliveryId: varchar("deliveryId", { length: 64 }).notNull().unique(),
+  channelId: int("channelId").notNull(),
+  incidentId: int("incidentId"),
+  status: mysqlEnum("status", ["sent", "failed", "skipped"]).notNull(),
+  statusCode: int("statusCode"),
+  error: text("error"),
+  attempts: int("attempts").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  incidentIdx: index("idx_delivery_incident").on(table.incidentId),
+  channelIdx: index("idx_delivery_channel").on(table.channelId),
+}));
+
+export type NotificationDelivery = typeof notificationDeliveries.$inferSelect;
+export type InsertNotificationDelivery = typeof notificationDeliveries.$inferInsert;
+
 export const platformAuditLogs = mysqlTable("platform_audit_logs", {
   id: int("id").autoincrement().primaryKey(),
   auditId: varchar("auditId", { length: 64 }).notNull().unique(),

@@ -16,6 +16,7 @@ import { analyzePhishingEmail } from "./security/phishing";
 import { executeSoarPlaybook } from "./security/soar";
 import { seedDemoSecurityData } from "./security/demoData";
 import { translateSigmaRules } from "./security/sigma";
+import { dispatchToChannel, notifyIncidentCreated } from "./security/notifications";
 
 const jsonRecord = z.record(z.string(), z.any());
 const severitySchema = z.enum(["critical", "high", "medium", "low"]);
@@ -278,7 +279,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const incidentId = nanoid();
-        await db.createIncident({
+        const incidentPk = await db.createIncident({
           incidentId,
           title: input.title,
           description: input.description,
@@ -292,6 +293,16 @@ export const appRouter = router({
           updatedAt: new Date(),
         });
         await audit(ctx.user?.id, "incident.create", "incident", incidentId, { title: input.title });
+        // Fire-and-forget notification fan-out (best-effort, never throws).
+        void notifyIncidentCreated({
+          incidentPk,
+          incidentId,
+          title: input.title,
+          severity: input.severity,
+          classification: input.classification,
+          description: input.description,
+          source: "manual",
+        }).catch(() => {});
         return { incidentId, success: true };
       }),
 
@@ -1115,6 +1126,83 @@ export const appRouter = router({
           newRole: input.role,
         });
         return { success: true, userId: target.id, role: input.role };
+      }),
+  }),
+
+  notifications: router({
+    listChannels: adminProcedure.input(z.object({ limit: z.number().int().positive().max(200).default(100) })).query(async ({ input }) => db.getNotificationChannels(input.limit)),
+
+    createChannel: adminProcedure
+      .input(z.object({
+        name: z.string().min(1).max(255),
+        type: z.enum(["slack", "webhook", "email"]),
+        target: z.string().min(1).max(1024),
+        minSeverity: severitySchema.default("high"),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const channelId = nanoid();
+        await db.createNotificationChannel({
+          channelId,
+          name: input.name,
+          type: input.type,
+          target: input.target,
+          minSeverity: input.minSeverity,
+          enabled: true,
+          createdBy: ctx.user.id,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        await audit(ctx.user.id, "notifications.channel.create", "notification_channel", channelId, { type: input.type, name: input.name });
+        return { channelId, success: true };
+      }),
+
+    updateChannel: adminProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        enabled: z.boolean().optional(),
+        minSeverity: severitySchema.optional(),
+        name: z.string().min(1).max(255).optional(),
+        target: z.string().min(1).max(1024).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...changes } = input;
+        const channel = await db.getNotificationChannelById(id);
+        if (!channel) throw new TRPCError({ code: "NOT_FOUND", message: "Channel not found" });
+        await db.updateNotificationChannel(id, changes);
+        await audit(ctx.user.id, "notifications.channel.update", "notification_channel", channel.channelId, changes);
+        return { success: true };
+      }),
+
+    deleteChannel: adminProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input, ctx }) => {
+        const channel = await db.getNotificationChannelById(input.id);
+        if (!channel) throw new TRPCError({ code: "NOT_FOUND", message: "Channel not found" });
+        await db.deleteNotificationChannel(input.id);
+        await audit(ctx.user.id, "notifications.channel.delete", "notification_channel", channel.channelId, {});
+        return { success: true };
+      }),
+
+    listDeliveries: adminProcedure.input(z.object({ limit: z.number().int().positive().max(500).default(100) })).query(async ({ input }) => db.getNotificationDeliveries(input.limit)),
+
+    // Sends a synthetic incident to one channel so an operator can confirm
+    // wiring. The real outcome is recorded in the delivery ledger (surfaced by
+    // listDeliveries) — dispatch is best-effort and does not throw.
+    testChannel: adminProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input, ctx }) => {
+        const channel = await db.getNotificationChannelById(input.id);
+        if (!channel) throw new TRPCError({ code: "NOT_FOUND", message: "Channel not found" });
+        await dispatchToChannel(channel, {
+          incidentPk: 0,
+          incidentId: `test-${nanoid(8)}`,
+          title: "Sentinel-X test notification",
+          severity: "critical", // critical clears any channel's severity floor
+          description: "This is a test notification confirming channel delivery.",
+          source: "test",
+        });
+        await audit(ctx.user.id, "notifications.channel.test", "notification_channel", channel.channelId, {});
+        return { success: true };
       }),
   }),
 
