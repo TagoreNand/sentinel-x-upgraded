@@ -17,6 +17,7 @@ import { executeSoarPlaybook } from "./security/soar";
 import { seedDemoSecurityData } from "./security/demoData";
 import { translateSigmaRules } from "./security/sigma";
 import { dispatchToChannel, notifyIncidentCreated } from "./security/notifications";
+import { pollFeed } from "./security/intel";
 
 const jsonRecord = z.record(z.string(), z.any());
 const severitySchema = z.enum(["critical", "high", "medium", "low"]);
@@ -1203,6 +1204,80 @@ export const appRouter = router({
         });
         await audit(ctx.user.id, "notifications.channel.test", "notification_channel", channel.channelId, {});
         return { success: true };
+      }),
+  }),
+
+  intel: router({
+    // authToken is a secret — never return it to the client.
+    listFeeds: adminProcedure.input(z.object({ limit: z.number().int().positive().max(200).default(100) })).query(async ({ input }) => {
+      const feeds = await db.getIntelFeeds(input.limit);
+      return feeds.map(({ authToken, ...rest }) => ({ ...rest, hasAuthToken: Boolean(authToken) }));
+    }),
+
+    createFeed: adminProcedure
+      .input(z.object({
+        name: z.string().min(1).max(255),
+        type: z.enum(["taxii", "stix", "misp"]),
+        url: z.string().url().max(1024),
+        authToken: z.string().max(1024).optional(),
+        defaultThreatLevel: severitySchema.default("medium"),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const feedId = nanoid();
+        await db.createIntelFeed({
+          feedId,
+          name: input.name,
+          type: input.type,
+          url: input.url,
+          authToken: input.authToken,
+          defaultThreatLevel: input.defaultThreatLevel,
+          enabled: true,
+          createdBy: ctx.user.id,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        await audit(ctx.user.id, "intel.feed.create", "intel_feed", feedId, { type: input.type, name: input.name });
+        return { feedId, success: true };
+      }),
+
+    updateFeed: adminProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        enabled: z.boolean().optional(),
+        name: z.string().min(1).max(255).optional(),
+        url: z.string().url().max(1024).optional(),
+        authToken: z.string().max(1024).optional(),
+        defaultThreatLevel: severitySchema.optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...changes } = input;
+        const feed = await db.getIntelFeedById(id);
+        if (!feed) throw new TRPCError({ code: "NOT_FOUND", message: "Feed not found" });
+        await db.updateIntelFeed(id, changes);
+        await audit(ctx.user.id, "intel.feed.update", "intel_feed", feed.feedId, { ...changes, authToken: undefined });
+        return { success: true };
+      }),
+
+    deleteFeed: adminProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input, ctx }) => {
+        const feed = await db.getIntelFeedById(input.id);
+        if (!feed) throw new TRPCError({ code: "NOT_FOUND", message: "Feed not found" });
+        await db.deleteIntelFeed(input.id);
+        await audit(ctx.user.id, "intel.feed.delete", "intel_feed", feed.feedId, {});
+        return { success: true };
+      }),
+
+    // Manual poll now, returning the run summary. Best-effort: pollFeed never
+    // throws and records the outcome on the feed row.
+    pollFeed: adminProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input, ctx }) => {
+        const feed = await db.getIntelFeedById(input.id);
+        if (!feed) throw new TRPCError({ code: "NOT_FOUND", message: "Feed not found" });
+        const result = await pollFeed(feed);
+        await audit(ctx.user.id, "intel.feed.poll", "intel_feed", feed.feedId, { created: result.created, error: result.error });
+        return result;
       }),
   }),
 

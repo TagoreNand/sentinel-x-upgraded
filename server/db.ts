@@ -46,6 +46,9 @@ import {
   type InsertNotificationChannel,
   notificationDeliveries,
   type InsertNotificationDelivery,
+  intelFeeds,
+  type IntelFeed,
+  type InsertIntelFeed,
 } from "../drizzle/schema";
 import { ENV, envNumber, resolveDefaultRole } from "./_core/env";
 import type { Role } from "@shared/roles";
@@ -480,6 +483,75 @@ export async function findIOCsByValues(values: string[]) {
     .from(indicatorsOfCompromise)
     .where(and(inArray(indicatorsOfCompromise.iocValue, values), eq(indicatorsOfCompromise.status, "active")))
     .limit(100);
+}
+
+/**
+ * Which of the given values already exist as IOCs (any status). Feed polling
+ * uses this to dedup — an indicator already known is not re-inserted. Chunked
+ * so a large feed does not build one giant IN() clause.
+ */
+export async function findExistingIocValues(values: string[]): Promise<Set<string>> {
+  if (values.length === 0) return new Set();
+  const db = await getDb();
+  const found = new Set<string>();
+  const CHUNK = 500;
+  for (let i = 0; i < values.length; i += CHUNK) {
+    const chunk = values.slice(i, i + CHUNK);
+    const rows = await db
+      .select({ iocValue: indicatorsOfCompromise.iocValue })
+      .from(indicatorsOfCompromise)
+      .where(inArray(indicatorsOfCompromise.iocValue, chunk));
+    for (const row of rows) found.add(row.iocValue);
+  }
+  return found;
+}
+
+/** Bulk-insert IOCs (feed ingestion), chunked to bound statement size. */
+export async function bulkCreateIOCs(iocs: (typeof indicatorsOfCompromise.$inferInsert)[]): Promise<number> {
+  if (iocs.length === 0) return 0;
+  const db = await getDb();
+  const CHUNK = 500;
+  let inserted = 0;
+  for (let i = 0; i < iocs.length; i += CHUNK) {
+    const chunk = iocs.slice(i, i + CHUNK);
+    await db.insert(indicatorsOfCompromise).values(chunk);
+    inserted += chunk.length;
+  }
+  return inserted;
+}
+
+// ---- Intel feeds -----------------------------------------------------------
+
+export async function createIntelFeed(feed: InsertIntelFeed): Promise<number> {
+  const db = await getDb();
+  const [row] = await db.insert(intelFeeds).values(feed).$returningId();
+  return row.id;
+}
+
+export async function getIntelFeeds(limit = 100): Promise<IntelFeed[]> {
+  const db = await getDb();
+  return await db.select().from(intelFeeds).orderBy(desc(intelFeeds.createdAt)).limit(limit);
+}
+
+export async function getIntelFeedById(id: number): Promise<IntelFeed | undefined> {
+  const db = await getDb();
+  const result = await db.select().from(intelFeeds).where(eq(intelFeeds.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getEnabledIntelFeeds(): Promise<IntelFeed[]> {
+  const db = await getDb();
+  return await db.select().from(intelFeeds).where(eq(intelFeeds.enabled, true));
+}
+
+export async function updateIntelFeed(id: number, changes: Partial<InsertIntelFeed>): Promise<void> {
+  const db = await getDb();
+  await db.update(intelFeeds).set(changes).where(eq(intelFeeds.id, id));
+}
+
+export async function deleteIntelFeed(id: number): Promise<void> {
+  const db = await getDb();
+  await db.delete(intelFeeds).where(eq(intelFeeds.id, id));
 }
 
 export async function createThreatActor(actor: typeof threatActors.$inferInsert) {
