@@ -61,13 +61,21 @@ export function mapStixObjectType(objectType: string, property: string): IocType
  */
 export function parseStixPattern(pattern: string, confidence?: number): ParsedIoc[] {
   const out: ParsedIoc[] = [];
-  const comparison = /([a-z0-9_-]+):([a-z0-9._'"-]+)\s*(?:=|LIKE)\s*'([^']*)'/gi;
+  // Only the exact-equality operator is faithfully representable. LIKE/MATCHES
+  // are wildcard/regex operators whose value (e.g. '10.0.0.%') is NOT a literal
+  // observable; extracting it would store a garbage IOC that can never match on
+  // the pipeline's exact IN() lookup, so those comparisons are left unmatched
+  // (fail closed). The value group consumes STIX escape sequences (\\ \') so an
+  // escaped quote doesn't truncate the value.
+  const comparison = /([a-z0-9_-]+):([a-z0-9._'"-]+)\s*=\s*'((?:[^'\\]|\\.)*)'/gi;
   let match: RegExpExecArray | null;
   while ((match = comparison.exec(pattern)) !== null) {
-    const [, objectType, property, value] = match;
+    const [, objectType, property, rawValue] = match;
     const iocType = mapStixObjectType(objectType, property);
-    if (iocType && value.trim().length > 0) {
-      out.push({ iocType, iocValue: value.trim(), confidence });
+    // Decode STIX single-quoted string escapes: \\ -> \, \' -> '.
+    const value = rawValue.replace(/\\(['\\])/g, "$1").trim();
+    if (iocType && value.length > 0) {
+      out.push({ iocType, iocValue: value, confidence });
     }
   }
   return out;
@@ -184,12 +192,23 @@ export function parseMispAttributes(attributes: unknown[]): ParseResult {
 
 export type FeedFetcher = (feed: IntelFeed, timeoutMs: number) => Promise<unknown>;
 
+const MAX_RESPONSE_BYTES = 32 * 1024 * 1024; // bound a hostile/huge feed body
+
+// Hardened defaults shared by every feed request:
+// - maxRedirects: 0 — the request carries a credential (Bearer / API key), so
+//   following a 302 could ship that token to an attacker-controlled or internal
+//   host the admin never configured. Refuse redirects outright.
+// - maxContentLength/maxBodyLength — a feed that streams gigabytes must not OOM
+//   the process.
+const hardenedAxios = { maxRedirects: 0, maxContentLength: MAX_RESPONSE_BYTES, maxBodyLength: MAX_RESPONSE_BYTES } as const;
+
 const defaultFetcher: FeedFetcher = async (feed, timeoutMs) => {
   if (feed.type === "misp") {
     const response = await axios.post(
       feed.url,
       { returnFormat: "json", limit: 5000, enforceWarninglist: true },
       {
+        ...hardenedAxios,
         timeout: timeoutMs,
         headers: { Accept: "application/json", "content-type": "application/json", ...(feed.authToken ? { Authorization: feed.authToken } : {}) },
       },
@@ -198,6 +217,7 @@ const defaultFetcher: FeedFetcher = async (feed, timeoutMs) => {
   }
   // taxii / stix are both GET returning STIX JSON.
   const response = await axios.get(feed.url, {
+    ...hardenedAxios,
     timeout: timeoutMs,
     headers: {
       Accept: feed.type === "taxii" ? "application/taxii+json;version=2.1" : "application/json",
@@ -268,8 +288,18 @@ export async function pollFeed(feed: IntelFeed, deps: PollDeps = defaultDeps()):
   }
 }
 
+let sweeping = false;
+
 /** Scheduler entry: poll every enabled feed once. Best-effort. */
 export async function pollAllEnabledFeeds(deps: PollDeps = defaultDeps()): Promise<void> {
+  // Guard against overlapping ticks: a sweep that runs longer than the poll
+  // interval (many slow feeds) must not stack a second concurrent sweep on top
+  // — that would double-poll and amplify the check-then-insert dedup window.
+  if (sweeping) {
+    log.warn("skipping intel sweep: previous sweep still running");
+    return;
+  }
+  sweeping = true;
   try {
     const feeds = await db.getEnabledIntelFeeds();
     for (const feed of feeds) {
@@ -277,6 +307,8 @@ export async function pollAllEnabledFeeds(deps: PollDeps = defaultDeps()): Promi
     }
   } catch (error) {
     log.error("scheduled feed sweep failed", error);
+  } finally {
+    sweeping = false;
   }
 }
 

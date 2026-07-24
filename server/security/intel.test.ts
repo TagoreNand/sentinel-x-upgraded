@@ -50,6 +50,24 @@ describe("parseStixPattern", () => {
     expect(parseStixPattern("[network-traffic:src_ref.type = 'ipv4-addr']")).toEqual([]);
     expect(parseStixPattern("garbage")).toEqual([]);
   });
+
+  it("fails closed on LIKE (wildcard) comparisons rather than storing the literal", () => {
+    // '10.0.0.%' is a wildcard, not an observable — must not become an IOC.
+    expect(parseStixPattern("[ipv4-addr:value LIKE '10.0.0.%']")).toEqual([]);
+    expect(parseStixPattern("[domain-name:value LIKE '%.evil.com']")).toEqual([]);
+    // A mixed pattern still extracts the exact-equality observable.
+    const mixed = parseStixPattern("[url:value = 'http://bad.test/a' OR url:value LIKE '%/b']");
+    expect(mixed.map((i) => i.iocValue)).toEqual(["http://bad.test/a"]);
+  });
+
+  it("decodes STIX string escapes and does not truncate on an escaped quote", () => {
+    // Backslash-escaped path: \\ -> \
+    const reg = parseStixPattern("[windows-registry-key:key = 'HKLM\\\\Software\\\\Run']");
+    expect(reg[0].iocValue).toBe("HKLM\\Software\\Run");
+    // Escaped single quote: the value must not stop at the escaped quote.
+    const name = parseStixPattern("[file:name = 'O\\'Brien.exe']");
+    expect(name[0].iocValue).toBe("O'Brien.exe");
+  });
 });
 
 describe("parseStixObjects", () => {
