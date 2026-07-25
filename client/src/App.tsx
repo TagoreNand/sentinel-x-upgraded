@@ -11,9 +11,10 @@ import { SiemModule, ThreatIntelModule, VulnerabilityScannerModule, IdsModule, C
 import OperationsPage from "./pages/OperationsPage";
 import AdminUsersPage, { RoleBadge } from "./pages/AdminUsersPage";
 import AdminNotificationsPage from "./pages/AdminNotificationsPage";
+import AdminIntelFeedsPage from "./pages/AdminIntelFeedsPage";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Shield, Radar, Eye, Zap, Lock, Skull, AlertTriangle, Settings, ShieldCheck, Users, Bell } from "lucide-react";
+import { Shield, Radar, Eye, Zap, Lock, Skull, AlertTriangle, Settings, ShieldCheck, Users, Bell, Rss } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useRole } from "@/_core/hooks/useRole";
 import { getLoginUrl } from "@/const";
@@ -86,6 +87,10 @@ function SocLayout({ children }: { children: React.ReactNode }) {
               <a href="/admin/notifications" className="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-accent/10 transition-colors text-sm">
                 <Bell className="w-4 h-4 text-amber-500" />
                 Notifications
+              </a>
+              <a href="/admin/intel-feeds" className="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-accent/10 transition-colors text-sm">
+                <Rss className="w-4 h-4 text-amber-500" />
+                Intel Feeds
               </a>
             </div>
           )}
@@ -174,6 +179,7 @@ function Router() {
         <Route path="/operations" component={OperationsPage} />
         <Route path="/admin/users" component={AdminUsersPage} />
         <Route path="/admin/notifications" component={AdminNotificationsPage} />
+        <Route path="/admin/intel-feeds" component={AdminIntelFeedsPage} />
         <Route
           path="/siem"
           component={() => (

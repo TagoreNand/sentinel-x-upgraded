@@ -9,6 +9,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { closeDb, pingDb } from "../db";
 import { closeIngestQueue, initIngestQueue } from "../queue/ingestQueue";
+import { initIntelScheduler, stopIntelScheduler } from "../security/intel";
 import { validateEnv } from "./env";
 import { closeIngestRateLimiter } from "./trpc";
 import { logger } from "./logger";
@@ -133,6 +134,9 @@ async function startServer() {
   // Non-blocking: Redis (if configured) connects in the background; a queue
   // transport outage degrades ingestion throughput, not API availability.
   initIngestQueue();
+  // Periodic external threat-intel polling (disabled unless an interval is
+  // configured). Manual polling via the API works regardless.
+  initIntelScheduler();
 
   server.listen(port, () => {
     log.info("server listening", { port, env: process.env.NODE_ENV ?? "unknown" });
@@ -161,6 +165,7 @@ async function startServer() {
         // Queue first (drains in-flight jobs that still need the DB), then
         // the pool. Reversed order would strand mid-job workers without a
         // database.
+        stopIntelScheduler();
         await closeIngestQueue();
         await closeIngestRateLimiter();
         await closeDb();

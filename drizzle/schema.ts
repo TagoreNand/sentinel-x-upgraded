@@ -600,6 +600,39 @@ export type IngestJob = typeof ingestJobs.$inferSelect;
 export type InsertIngestJob = typeof ingestJobs.$inferInsert;
 
 // ============================================================================
+// EXTERNAL THREAT-INTEL FEEDS
+// ============================================================================
+
+export const intelFeeds = mysqlTable("intel_feeds", {
+  id: int("id").autoincrement().primaryKey(),
+  feedId: varchar("feedId", { length: 64 }).notNull().unique(),
+  name: varchar("name", { length: 255 }).notNull(),
+  // taxii = STIX 2.x collection endpoint, stix = a STIX bundle URL,
+  // misp = a MISP /attributes/restSearch endpoint.
+  type: mysqlEnum("type", ["taxii", "stix", "misp"]).notNull(),
+  url: varchar("url", { length: 1024 }).notNull(),
+  // Bearer token (taxii/stix) or MISP API key. Stored plaintext here as the
+  // app's current maturity — a hardened deployment sources it from the secret
+  // store, like DATABASE_URL/JWT_SECRET.
+  authToken: varchar("authToken", { length: 1024 }),
+  defaultThreatLevel: mysqlEnum("defaultThreatLevel", ["critical", "high", "medium", "low"]).default("medium").notNull(),
+  enabled: boolean("enabled").default(true).notNull(),
+  // Last-poll observability, so a silently-failing feed is visible.
+  lastPolledAt: timestamp("lastPolledAt"),
+  lastStatus: varchar("lastStatus", { length: 32 }),
+  lastError: text("lastError"),
+  lastIocCount: int("lastIocCount").default(0),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+}, (table) => ({
+  enabledIdx: index("idx_feed_enabled").on(table.enabled),
+}));
+
+export type IntelFeed = typeof intelFeeds.$inferSelect;
+export type InsertIntelFeed = typeof intelFeeds.$inferInsert;
+
+// ============================================================================
 // NOTIFICATION CHANNELS & DELIVERY LEDGER
 // ============================================================================
 
