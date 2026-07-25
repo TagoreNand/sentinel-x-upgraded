@@ -41,6 +41,11 @@ import {
   cveDatabase,
   ingestJobs,
   type IngestJob,
+  notificationChannels,
+  type NotificationChannel,
+  type InsertNotificationChannel,
+  notificationDeliveries,
+  type InsertNotificationDelivery,
 } from "../drizzle/schema";
 import { ENV, envNumber, resolveDefaultRole } from "./_core/env";
 import type { Role } from "@shared/roles";
@@ -804,6 +809,53 @@ export async function requeueIngestJob(ingestId: string): Promise<void> {
     .update(ingestJobs)
     .set({ status: "queued", startedAt: null })
     .where(and(eq(ingestJobs.ingestId, ingestId), eq(ingestJobs.status, "processing")));
+}
+
+// ============================================================================
+// NOTIFICATION CHANNELS & DELIVERIES
+// ============================================================================
+
+export async function createNotificationChannel(channel: InsertNotificationChannel): Promise<number> {
+  const db = await getDb();
+  const [row] = await db.insert(notificationChannels).values(channel).$returningId();
+  return row.id;
+}
+
+export async function getNotificationChannels(limit = 100): Promise<NotificationChannel[]> {
+  const db = await getDb();
+  return await db.select().from(notificationChannels).orderBy(desc(notificationChannels.createdAt)).limit(limit);
+}
+
+/** Enabled channels only — the dispatch hot path. */
+export async function getActiveNotificationChannels(): Promise<NotificationChannel[]> {
+  const db = await getDb();
+  return await db.select().from(notificationChannels).where(eq(notificationChannels.enabled, true));
+}
+
+export async function getNotificationChannelById(id: number): Promise<NotificationChannel | undefined> {
+  const db = await getDb();
+  const result = await db.select().from(notificationChannels).where(eq(notificationChannels.id, id)).limit(1);
+  return result[0];
+}
+
+export async function updateNotificationChannel(id: number, changes: Partial<InsertNotificationChannel>): Promise<void> {
+  const db = await getDb();
+  await db.update(notificationChannels).set({ ...changes, updatedAt: new Date() }).where(eq(notificationChannels.id, id));
+}
+
+export async function deleteNotificationChannel(id: number): Promise<void> {
+  const db = await getDb();
+  await db.delete(notificationChannels).where(eq(notificationChannels.id, id));
+}
+
+export async function createNotificationDelivery(delivery: InsertNotificationDelivery): Promise<void> {
+  const db = await getDb();
+  await db.insert(notificationDeliveries).values(delivery);
+}
+
+export async function getNotificationDeliveries(limit = 200) {
+  const db = await getDb();
+  return await db.select().from(notificationDeliveries).orderBy(desc(notificationDeliveries.createdAt)).limit(limit);
 }
 
 // ============================================================================

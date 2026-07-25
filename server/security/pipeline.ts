@@ -42,6 +42,7 @@ import * as db from "../db";
 import { getDb } from "../db";
 import { PipelineError } from "../_core/errors";
 import { logger } from "../_core/logger";
+import { notifyIncidentCreated } from "./notifications";
 
 const log = logger.child({ component: "pipeline" });
 
@@ -542,6 +543,12 @@ export type IngestResult = {
     mitreTactic: string | null;
   }[];
   incidentIds: number[];
+  /**
+   * Incidents NEWLY created by this ingest (not correlated into an existing
+   * one). Post-commit notification fan-out keys off this so a correlated
+   * burst pages once, not per event.
+   */
+  createdIncidents: { id: number; incidentId: string; title: string; severity: Severity; classification?: string }[];
 };
 
 /**
@@ -689,6 +696,7 @@ export async function ingestAndDetect(input: {
       const detections: IngestResult["detections"] = [];
       const alertsOut: IngestResult["alerts"] = [];
       const incidentIds: number[] = [];
+      const createdIncidents: IngestResult["createdIncidents"] = [];
 
       for (const rule of activeRules) {
         const logic = parseRuleLogic(rule);
@@ -760,6 +768,13 @@ export async function ingestAndDetect(input: {
                 details: { rule: rule.ruleName, eventType: normalized.eventType, correlationKey },
                 timestamp: now,
               });
+              createdIncidents.push({
+                id: incidentPk,
+                incidentId: attemptedIncidentId,
+                title: `Detection: ${rule.ruleName}`,
+                severity: ruleSeverity,
+                classification: normalized.eventCategory,
+              });
               plog.info("incident created", { incidentId: incidentPk, ruleId: rule.ruleId, confidence: match.confidence });
             } else {
               plog.info("event correlated into existing incident", { incidentId: incidentPk, ruleId: rule.ruleId });
@@ -818,7 +833,7 @@ export async function ingestAndDetect(input: {
         alertsOut.push({ id: alertRow.id, title: rule.ruleName, severity: ruleSeverity, incidentId: incidentPk });
       }
 
-      return { normalized, enrichment, eventId: eventPk, alerts: alertsOut, detections, incidentIds };
+      return { normalized, enrichment, eventId: eventPk, alerts: alertsOut, detections, incidentIds, createdIncidents };
     });
 
     // Single bounded retry: a deadlock victim committed nothing, and the
@@ -844,6 +859,22 @@ export async function ingestAndDetect(input: {
       detections: result.detections.length,
       incidents: result.incidentIds.length,
     });
+
+    // Notify AFTER commit and only for NEWLY created incidents — fire and
+    // forget. notifyIncidentCreated is best-effort and never throws; the
+    // extra .catch is belt-and-suspenders so a rejected promise can never
+    // surface as an unhandled rejection and take the process down.
+    for (const incident of result.createdIncidents) {
+      void notifyIncidentCreated({
+        incidentPk: incident.id,
+        incidentId: incident.incidentId,
+        title: incident.title,
+        severity: incident.severity,
+        classification: incident.classification,
+        source: "detection-pipeline",
+      }).catch((err) => plog.error("notification dispatch error", err));
+    }
+
     return result;
   } catch (error) {
     // Full diagnostics stay server-side; callers receive a typed error whose

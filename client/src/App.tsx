@@ -10,9 +10,10 @@ import IncidentsPage from "./pages/IncidentsPage";
 import { SiemModule, ThreatIntelModule, VulnerabilityScannerModule, IdsModule, CryptographyModule, HoneypotModule } from "./pages/Modules";
 import OperationsPage from "./pages/OperationsPage";
 import AdminUsersPage, { RoleBadge } from "./pages/AdminUsersPage";
+import AdminNotificationsPage from "./pages/AdminNotificationsPage";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Shield, Radar, Eye, Zap, Lock, Skull, AlertTriangle, Settings, ShieldCheck, Users } from "lucide-react";
+import { Shield, Radar, Eye, Zap, Lock, Skull, AlertTriangle, Settings, ShieldCheck, Users, Bell } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useRole } from "@/_core/hooks/useRole";
 import { getLoginUrl } from "@/const";
@@ -81,6 +82,10 @@ function SocLayout({ children }: { children: React.ReactNode }) {
               <a href="/admin/users" className="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-accent/10 transition-colors text-sm">
                 <Users className="w-4 h-4 text-amber-500" />
                 User Management
+              </a>
+              <a href="/admin/notifications" className="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-accent/10 transition-colors text-sm">
+                <Bell className="w-4 h-4 text-amber-500" />
+                Notifications
               </a>
             </div>
           )}
@@ -168,6 +173,7 @@ function Router() {
         <Route path="/incidents" component={IncidentsPage} />
         <Route path="/operations" component={OperationsPage} />
         <Route path="/admin/users" component={AdminUsersPage} />
+        <Route path="/admin/notifications" component={AdminNotificationsPage} />
         <Route
           path="/siem"
           component={() => (
